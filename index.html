@@ -117,7 +117,14 @@
       const idxE = col(['einsatznummer','einsatz','einsatz_nr','einsatz-nr']);
       const idxT = col(['token','code']);
       const idxK = col(['klinikname','klinik','haus']);
-      const idxD = col(['finale diagnose (kurz)','finale_diagnose','diagnose','enddiagnose']);
+      const idxD = col([
+  'finale diagnose (kurz)',
+  'finale diagnose',
+  'finaldiagnose',
+  'diagnose',
+  'enddiagnose'
+]);
+
 
       if (idxE < 0 || idxT < 0 || idxD < 0) {
         out.innerHTML = '<div class="err">CSV-Format nicht erkannt. Erwartet mind.: Einsatznummer, Token, „Finale Diagnose (kurz)“.</div>';
