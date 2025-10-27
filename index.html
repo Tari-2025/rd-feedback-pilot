@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rückmeldung zur Verdachtsdiagnose</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
+    margin: 0;
+    padding: 24px;
+    background: #f8fafc;
+    color: #0f172a;
+    max-width: 800px;
+  }
+  h1 { margin: 0 0 12px; font-size: 1.6rem; }
+  .hint { font-size: 0.95rem; color: #475569; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin: 20px 0; }
+  label { display: block; margin: 8px 0 4px; font-weight: 500; }
+  input, button { width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 1rem; }
+  button { background: #0ea5e9; color: #fff; border: none; cursor: pointer; margin-top: 12px; }
+  button:hover { background: #0284c7; }
+  .ok { background: #ecfdf5; border: 1px solid #10b981; color: #065f46; padding: 16px; border-radius: 12px; margin-top: 12px; }
+  .err { background: #fef2f2; border: 1px solid #dc2626; color: #7f1d1d; padding: 14px; border-radius: 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Rückmeldung zur Verdachtsdiagnose</h1>
+<p class="hint">
+  Diese Abfrage dient der freiwilligen Rückmeldung zur Qualität der präklinischen Einschätzung.
+  Nur die Crew, die den passenden Token besitzt, kann die Rückmeldung einsehen.
+</p>
+
+<div class="card">
+  <h2>Einstellungen (einmalig)</h2>
+  <label for="csvurl">CSV-Quelle (Link zur veröffentlichten Tabelle)</label>
+  <input id="csvurl" placeholder="https://docs.google.com/.../pub?output=csv" />
+  <button onclick="saveCSV()">Speichern</button>
+  <p class="hint">Der Link wird nur lokal im Browser gespeichert.</p>
+</div>
+
+<div class="card">
+  <h2>Abruf</h2>
+  <label for="einsatz">Einsatznummer</label>
+  <input id="einsatz" placeholder="z. B. 231027-1432-4711" />
+  <label for="token">Token</label>
+  <input id="token" placeholder="z. B. ABC123" />
+  <button onclick="lookup()">Diagnose abrufen</button>
+  <div id="out"></div>
+</div>
+
+<script>
+  function saveCSV() {
+    const u = document.getElementById('csvurl').value.trim();
+    if (!u) { alert('Bitte CSV-Link eintragen.'); return; }
+    localStorage.setItem('rd_csv_url', u);
+    alert('Gespeichert.');
+  }
+  function loadCSV() {
+    const u = localStorage.getItem('rd_csv_url') || '';
+    document.getElementById('csvurl').value = u;
+    return u;
+  }
+  function parseCSV(text) {
+    const rows = [];
+    let i=0, field='', row=[], inQuotes=false;
+    while (i < text.length) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i+1] === '"') { field += '"'; i++; }
+          else inQuotes = false;
+        } else field += c;
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(field); field=''; }
+        else if (c === '\n' || c === '\r') {
+          if (field !== '' || row.length > 0) { row.push(field); rows.push(row); row=[]; field=''; }
+          if (c === '\r' && text[i+1] === '\n') i++;
+        } else field += c;
+      }
+      i++;
+    }
+    if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  async function lookup() {
+    const csv = loadCSV();
+    const einsatz = document.getElementById('einsatz').value.trim();
+    const token = document.getElementById('token').value.trim().toUpperCase();
+    const out = document.getElementById('out');
+
+    if (!csv) { out.innerHTML = '<div class="err">Keine CSV-Quelle hinterlegt.</div>'; return; }
+    if (!einsatz || !token) { out.innerHTML = '<div class="err">Bitte Einsatznummer und Token eingeben.</div>'; return; }
+
+    out.innerHTML = 'Lade...';
+    try {
+      const res = await fetch(csv, { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const txt = await res.text();
+      const rows = parseCSV(txt);
+
+      if (!rows || rows.length === 0) { out.innerHTML = '<div class="err">CSV leer.</div>'; return; }
+
+      // Header normalisieren
+      const header = rows[0].map(h => (h || '').trim().toLowerCase());
+      function col(nameOptions){
+        for (const name of nameOptions) {
+          const idx = header.indexOf(name.toLowerCase());
+          if (idx > -1) return idx;
+        }
+        return -1;
+      }
+      const idxE = col(['einsatznummer','einsatz','einsatz_nr','einsatz-nr']);
+      const idxT = col(['token','code']);
+      const idxK = col(['klinikname','klinik','haus']);
+      const idxD = col(['finale diagnose (kurz)','finale_diagnose','diagnose','enddiagnose']);
+
+      if (idxE < 0 || idxT < 0 || idxD < 0) {
+        out.innerHTML = '<div class="err">CSV-Format nicht erkannt. Erwartet mind.: Einsatznummer, Token, „Finale Diagnose (kurz)“.</div>';
+        return;
+      }
+
+      let found = null;
+      for (let r = 1; r < rows.length; r++) {
+        const e = ((rows[r][idxE] || '') + '').trim();
+        const t = ((rows[r][idxT] || '') + '').trim().toUpperCase();
+        if (e === einsatz && t === token) { found = rows[r]; break; }
+      }
+
+      if (!found) { out.innerHTML = '<div class="err">Kein Eintrag gefunden.</div>'; return; }
+
+      const klinik = idxK > -1 ? (found[idxK] || '—') : '—';
+      const diag   = found[idxD] || '—';
+
+      out.innerHTML = `
+        <div class="ok">
+          <b>Einsatznummer:</b> ${einsatz}<br>
+          <b>Klinik:</b> ${klinik}<br>
+          <b>Finale Diagnose:</b> ${diag}
+        </div>`;
+    } catch (err) {
+      out.innerHTML = '<div class="err">Fehler beim Laden: ' + err.message + '</div>';
+    }
+  }
+
+  loadCSV();
+</script>
+
+</body>
+</html>
